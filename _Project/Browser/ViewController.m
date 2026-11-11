@@ -816,6 +816,11 @@ static UIColor *kTextColor(void) {
     [super pressesEnded:presses withEvent:event];
 }
 
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    [self.remoteInputController handlePressesCancelled:presses withEvent:event];
+    [super pressesCancelled:presses withEvent:event];
+}
+
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if ([self.remoteInputController handleTouchesBegan:touches withEvent:event]) {
         return;

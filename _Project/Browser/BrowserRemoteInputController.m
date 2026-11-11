@@ -42,6 +42,43 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
     }
 }
 
+// ---- D-pad cursor control (for remotes without a touch surface) ----
+// Set to NO to restore the original behaviour (arrows are not used to move the cursor).
+static const BOOL kBrowserDPadCursorEnabled = YES;
+static const CGFloat kDPadScreenWidth = 1920.0;      // same bounds the touch code uses
+static const CGFloat kDPadScreenHeight = 1080.0;
+static const CGFloat kDPadTapStep = 48.0;            // points moved by a single quick press
+static const CGFloat kDPadMinSpeed = 350.0;          // points/second when a hold begins
+static const CGFloat kDPadMaxSpeed = 1800.0;         // points/second after the ramp-up
+static const CFTimeInterval kDPadHoldDelay = 0.25;   // seconds before continuous movement starts
+static const CFTimeInterval kDPadRampDuration = 1.2; // seconds to reach max speed
+static const CGFloat kDPadEdgeMargin = 4.0;          // "at the screen edge" tolerance
+static const CGFloat kDPadScrollSpeed = 900.0;       // page scroll speed when pushing against an edge
+// Max gap between two Select presses to count as a double press (toggles cursor/scroll mode).
+// Single clicks are delayed by this long, so lower it if clicking feels sluggish.
+static const CFTimeInterval kSelectDoublePressWindow = 0.5;
+// Scroll mode: arrows scroll the page (tap = one step, hold = continuous with ramp-up).
+static const CGFloat kDPadScrollTapStep = 240.0;
+static const CGFloat kDPadScrollMinSpeed = 600.0;
+static const CGFloat kDPadScrollMaxSpeed = 2400.0;
+
+static BOOL BrowserIsArrowPress(UIPressType type) {
+    return type == UIPressTypeUpArrow ||
+           type == UIPressTypeDownArrow ||
+           type == UIPressTypeLeftArrow ||
+           type == UIPressTypeRightArrow;
+}
+
+static CGPoint BrowserDPadDirection(UIPressType type) {
+    switch (type) {
+        case UIPressTypeUpArrow: return CGPointMake(0, -1);
+        case UIPressTypeDownArrow: return CGPointMake(0, 1);
+        case UIPressTypeLeftArrow: return CGPointMake(-1, 0);
+        case UIPressTypeRightArrow: return CGPointMake(1, 0);
+        default: return CGPointZero;
+    }
+}
+
 @interface BrowserRemoteInputController ()
 
 @property (nonatomic, weak) id<BrowserRemoteInputControllerHost> host;
@@ -58,6 +95,12 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
 @property (nonatomic) CFTimeInterval lastDirectSelectPressTimestamp;
 @property (nonatomic) CFTimeInterval lastSelectPressTimestamp;
 @property (nonatomic) BOOL awaitingSecondSelectPress;
+@property (nonatomic) CADisplayLink *dpadDisplayLink;
+@property (nonatomic) UIPressType dpadHeldType;
+@property (nonatomic) CFTimeInterval dpadHoldStart;
+@property (nonatomic) CFTimeInterval dpadLastTimestamp;
+@property (nonatomic) BOOL dpadPressBeganAtTopEdge;
+@property (nonatomic) BOOL dpadDidScroll;
 
 @end
 
@@ -95,6 +138,7 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
     _cursorModeEnabled = cursorModeEnabled;
     self.lastTouchLocation = CGPointMake(-1, -1);
     [self stopManualScrollInertia];
+    [self stopDPadMovement];
     [self refreshInteractionState];
     if (!wasCursorModeEnabled && cursorModeEnabled) {
         [self.host browserRemoteInputControllerPersistSession];
@@ -218,7 +262,7 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
 
 - (void)handleSelectPressEnded {
     CFTimeInterval now = CACurrentMediaTime();
-    if (self.awaitingSecondSelectPress && (now - self.lastSelectPressTimestamp) < 0.35) {
+    if (self.awaitingSecondSelectPress && (now - self.lastSelectPressTimestamp) < kSelectDoublePressWindow) {
         self.awaitingSecondSelectPress = NO;
         self.lastSelectPressTimestamp = now;
         [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleDeferredSelectPressAction) object:nil];
@@ -231,7 +275,7 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
     self.awaitingSecondSelectPress = YES;
     self.lastSelectPressTimestamp = now;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleDeferredSelectPressAction) object:nil];
-    [self performSelector:@selector(handleDeferredSelectPressAction) withObject:nil afterDelay:0.3];
+    [self performSelector:@selector(handleDeferredSelectPressAction) withObject:nil afterDelay:kSelectDoublePressWindow];
 }
 
 - (void)handlePlayPauseDoubleTap:(UITapGestureRecognizer *)sender {
@@ -290,6 +334,9 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
               BrowserPressPhaseString(press.phase),
               [self.host browserRemoteInputControllerPresentedViewController] == nil ? @"(nil)" : NSStringFromClass([[self.host browserRemoteInputControllerPresentedViewController] class]));
     }
+    if (press != nil && BrowserIsArrowPress(press.type) && [self dpadControlActive]) {
+        [self beginDPadPress:press];
+    }
     (void)event;
 }
 
@@ -344,6 +391,10 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         return YES;
     }
 
+    if ([self endDPadPress:press]) {
+        return YES;
+    }
+
     if (press.type == UIPressTypeSelect) {
         self.lastDirectSelectPressTimestamp = CACurrentMediaTime();
         [self handleSelectPressEnded];
@@ -376,6 +427,166 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         return YES;
     }
     return NO;
+}
+
+#pragma mark - D-pad cursor control
+
+- (BOOL)dpadCursorControlActive {
+    if (!kBrowserDPadCursorEnabled || !self.cursorModeEnabled) {
+        return NO;
+    }
+    if ([self.host browserRemoteInputControllerPresentedViewController] != nil ||
+        [self.host browserRemoteInputControllerTopBarFocusActive] ||
+        [self.host browserRemoteInputControllerTabOverviewVisible]) {
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)dpadScrollControlActive {
+    if (!kBrowserDPadCursorEnabled || self.cursorModeEnabled) {
+        return NO;
+    }
+    if ([self.host browserRemoteInputControllerPresentedViewController] != nil ||
+        [self.host browserRemoteInputControllerTopBarFocusActive] ||
+        [self.host browserRemoteInputControllerTabOverviewVisible]) {
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)dpadControlActive {
+    return [self dpadCursorControlActive] || [self dpadScrollControlActive];
+}
+
+- (void)updateCursorImage {
+    self.cursorView.image = BrowserDefaultCursor();
+    if ([self.host browserRemoteInputControllerTabOverviewVisible]) {
+        if ([self.host browserRemoteInputControllerTabOverviewContainsPoint:self.cursorView.frame.origin]) {
+            self.cursorView.image = BrowserPointerCursor();
+        }
+        return;
+    }
+    if (self.cursorModeEnabled) {
+        NSString *containsLink = [self.host browserRemoteInputControllerHoverStateAtCursorPoint:self.cursorView.frame.origin];
+        if ([containsLink isEqualToString:@"true"]) {
+            self.cursorView.image = BrowserPointerCursor();
+        }
+    }
+}
+
+- (void)moveCursorByDelta:(CGPoint)delta {
+    CGRect rect = self.cursorView.frame;
+    rect.origin.x = MIN(MAX(rect.origin.x + delta.x, 0.0), kDPadScreenWidth);
+    rect.origin.y = MIN(MAX(rect.origin.y + delta.y, 0.0), kDPadScreenHeight);
+    self.cursorView.frame = rect;
+    [self updateCursorImage];
+}
+
+- (void)stopDPadMovement {
+    [self.dpadDisplayLink invalidate];
+    self.dpadDisplayLink = nil;
+    self.dpadDidScroll = NO;
+    self.dpadPressBeganAtTopEdge = NO;
+}
+
+- (void)beginDPadPress:(UIPress *)press {
+    [self stopDPadMovement];
+
+    CGPoint direction = BrowserDPadDirection(press.type);
+    self.dpadHeldType = press.type;
+    self.dpadHoldStart = CACurrentMediaTime();
+    self.dpadLastTimestamp = 0;
+    if (self.cursorModeEnabled) {
+        self.dpadPressBeganAtTopEdge = (press.type == UIPressTypeUpArrow &&
+                                        CGRectGetMinY(self.cursorView.frame) <= kDPadEdgeMargin);
+        // A quick tap still moves the cursor a little.
+        [self moveCursorByDelta:CGPointMake(direction.x * kDPadTapStep, direction.y * kDPadTapStep)];
+    } else {
+        UIScrollView *scrollView = [self.host browserRemoteInputControllerActiveScrollView];
+        self.dpadPressBeganAtTopEdge = (press.type == UIPressTypeUpArrow &&
+                                        (scrollView == nil || scrollView.contentOffset.y <= kDPadEdgeMargin));
+        // A quick tap scrolls the page one step.
+        if ([self applyManualScrollDelta:CGPointMake(direction.x * kDPadScrollTapStep, direction.y * kDPadScrollTapStep)]) {
+            self.dpadDidScroll = YES;
+        }
+    }
+
+    self.dpadDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(handleDPadDisplayLink:)];
+    [self.dpadDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)handleDPadDisplayLink:(CADisplayLink *)link {
+    if (![self dpadControlActive]) {
+        [self stopDPadMovement];
+        return;
+    }
+
+    if (self.dpadLastTimestamp <= 0) {
+        self.dpadLastTimestamp = link.timestamp;
+        return;
+    }
+    CFTimeInterval deltaTime = MIN(link.timestamp - self.dpadLastTimestamp, 0.1);
+    self.dpadLastTimestamp = link.timestamp;
+
+    CFTimeInterval held = CACurrentMediaTime() - self.dpadHoldStart;
+    if (held < kDPadHoldDelay) {
+        return;
+    }
+
+    CGFloat ramp = MIN((held - kDPadHoldDelay) / kDPadRampDuration, 1.0);
+    CGFloat speed = kDPadMinSpeed + (kDPadMaxSpeed - kDPadMinSpeed) * ramp;
+    CGPoint direction = BrowserDPadDirection(self.dpadHeldType);
+
+    if (!self.cursorModeEnabled) {
+        CGFloat scrollSpeed = kDPadScrollMinSpeed + (kDPadScrollMaxSpeed - kDPadScrollMinSpeed) * ramp;
+        CGPoint scrollStep = CGPointMake(direction.x * scrollSpeed * deltaTime, direction.y * scrollSpeed * deltaTime);
+        if ([self applyManualScrollDelta:scrollStep]) {
+            self.dpadDidScroll = YES;
+        }
+        return;
+    }
+
+    CGPoint before = self.cursorView.frame.origin;
+    [self moveCursorByDelta:CGPointMake(direction.x * speed * deltaTime, direction.y * speed * deltaTime)];
+    CGPoint after = self.cursorView.frame.origin;
+
+    // Cursor is pinned against a screen edge: keep holding to scroll the page instead.
+    if (fabs(after.x - before.x) + fabs(after.y - before.y) < 0.5) {
+        CGPoint scrollDelta = CGPointMake(direction.x * kDPadScrollSpeed * deltaTime,
+                                          direction.y * kDPadScrollSpeed * deltaTime);
+        if ([self applyManualScrollDelta:scrollDelta]) {
+            self.dpadDidScroll = YES;
+        }
+    }
+}
+
+- (BOOL)endDPadPress:(UIPress *)press {
+    if (self.dpadDisplayLink == nil || self.dpadHeldType != press.type) {
+        return NO;
+    }
+
+    BOOL didScroll = self.dpadDidScroll;
+    // Tapping Up while already at the top (cursor at the top edge, or page scrolled to the top
+    // in scroll mode) opens the top bar, as Up did before.
+    BOOL activateTopBar = press.type == UIPressTypeUpArrow &&
+                          self.dpadPressBeganAtTopEdge &&
+                          !didScroll &&
+                          [self.host browserRemoteInputControllerCanActivateTopBarFocus];
+    [self stopDPadMovement];
+
+    if (activateTopBar) {
+        [self.host browserRemoteInputControllerActivateTopBarFocus];
+    } else if (didScroll) {
+        [self.host browserRemoteInputControllerPersistSession];
+    }
+    return YES;
+}
+
+- (void)handlePressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    (void)presses;
+    (void)event;
+    [self stopDPadMovement];
 }
 
 - (BOOL)handleTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
