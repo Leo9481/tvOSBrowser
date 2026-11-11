@@ -311,7 +311,7 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                         @"if(prevEl&&prevEl!==el&&prevEl.isConnected){try{prevEl.dispatchEvent(new MouseEvent(\"mouseout\",{bubbles:true,cancelable:true,view:window}));prevEl.dispatchEvent(new MouseEvent(\"mouseleave\",{bubbles:false,view:window}));}catch(e){}}"
                         @"window.__navEl=el;"
                         @"try{[\"mouseover\",\"mouseenter\",\"mousemove\"].forEach(function(n){el.dispatchEvent(new MouseEvent(n,{bubbles:n!==\"mouseenter\",cancelable:true,view:window,clientX:cx,clientY:cy}));});}catch(e){}"
-                        @"return JSON.stringify({found:true,x:cx,y:cy,scrolled:didScroll});"
+                        @"return JSON.stringify({found:true,x:cx,y:cy,l:l,t:t,r:r,b:b,scrolled:didScroll});"
                         @"}"
                         @"var best=pick();"
                         @"if(best){"

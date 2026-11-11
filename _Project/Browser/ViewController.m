@@ -55,6 +55,12 @@ static UIColor *kTextColor(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    // Keep the screensaver (and auto-sleep) from starting while the browser is open.
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(browserApplicationDidBecomeActive:)
+                                                 name:UIApplicationDidBecomeActiveNotification
+                                               object:nil];
     self.definesPresentationContext = YES;
     self.scrollViewAllowBounces = YES;
 
@@ -71,6 +77,7 @@ static UIColor *kTextColor(void) {
     self.sessionStore = [BrowserSessionStore new];
     self.menuCoordinator = [[BrowserMenuCoordinator alloc] initWithHost:self preferencesStore:self.preferencesStore];
     self.remoteInputController = [[BrowserRemoteInputController alloc] initWithHost:self rootView:self.view];
+    [self.view addSubview:self.remoteInputController.highlightView];
     [self.view addSubview:self.remoteInputController.cursorView];
     self.videoPlaybackCoordinator = [[BrowserVideoPlaybackCoordinator alloc] initWithHost:self
                                                                       domInteractionService:self.domInteractionService];
@@ -120,8 +127,14 @@ static UIColor *kTextColor(void) {
     [self.tabCoordinator restoreInitialStateOrCreateFirstTab];
 }
 
+- (void)browserApplicationDidBecomeActive:(NSNotification *)notification {
+    (void)notification;
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+}
+
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
     [self.tabCoordinator webViewDidAppear];
     if (!self.preferencesStore.dontShowHintsOnLaunch && !self.displayedHintsOnLaunch) {
         [self showHintsAlert];
@@ -727,7 +740,9 @@ static UIColor *kTextColor(void) {
                                                     webView:self.webview];
 }
 
-- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction targetViewPoint:(CGPoint *)targetViewPoint {
+- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction
+                                              targetViewPoint:(CGPoint *)targetViewPoint
+                                               targetViewRect:(CGRect *)targetViewRect {
     if (self.webview == nil || self.webview.request == nil) {
         return 0;
     }
@@ -749,6 +764,14 @@ static UIColor *kTextColor(void) {
         CGPoint targetWebPoint = CGPointMake([result[@"x"] doubleValue] * scale, [result[@"y"] doubleValue] * scale);
         if (targetViewPoint != NULL) {
             *targetViewPoint = [self.view convertPoint:targetWebPoint fromView:self.webview];
+        }
+        if (targetViewRect != NULL) {
+            CGFloat left = [result[@"l"] doubleValue] * scale;
+            CGFloat top = [result[@"t"] doubleValue] * scale;
+            CGFloat right = [result[@"r"] doubleValue] * scale;
+            CGFloat bottom = [result[@"b"] doubleValue] * scale;
+            CGRect webRect = CGRectMake(left, top, MAX(right - left, 0.0), MAX(bottom - top, 0.0));
+            *targetViewRect = [self.view convertRect:webRect fromView:self.webview];
         }
         return 1;
     }
@@ -778,6 +801,7 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)webViewDidStartLoad:(id)webView {
+    [self.remoteInputController hideNavigationHighlight];
     [self.tabCoordinator webViewDidStartLoad:webView];
 }
 

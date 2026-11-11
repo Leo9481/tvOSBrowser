@@ -28,13 +28,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)browserRemoteInputControllerPushScrollInDirection:(CGPoint)direction amount:(CGFloat)amount;
 // Navigation mode: finds the nearest clickable item in `direction`. Returns 1 and sets *targetViewPoint
 // if found, 2 if it only scrolled, 0 if nothing happened.
-- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction targetViewPoint:(CGPoint *)targetViewPoint;
+- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction
+                                              targetViewPoint:(CGPoint *)targetViewPoint
+                                               targetViewRect:(CGRect *)targetViewRect;
 
 @end
 
 @interface BrowserRemoteInputController : NSObject
 
 @property (nonatomic, readonly) UIImageView *cursorView;
+@property (nonatomic, readonly) UIView *highlightView;
 @property (nonatomic, readonly) UIPanGestureRecognizer *manualScrollPanRecognizer;
 @property (nonatomic, readonly) UITapGestureRecognizer *playPauseDoubleTapRecognizer;
 @property (nonatomic, readonly, getter=isCursorModeEnabled) BOOL cursorModeEnabled;
@@ -53,6 +56,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)handleTouchesEnded;
 - (void)setCursorModeEnabled:(BOOL)cursorModeEnabled;
 - (void)refreshInteractionState;
+- (void)hideNavigationHighlight;
 
 @end
 

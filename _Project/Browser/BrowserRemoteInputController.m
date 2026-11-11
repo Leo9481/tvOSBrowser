@@ -62,6 +62,8 @@ static const CFTimeInterval kPlayPauseHoldDuration = 0.6;
 // Navigation mode (replaces scroll mode): arrows jump to the nearest clickable item.
 // Set to NO to leave scroll mode exactly as the original app handled it.
 static const BOOL kBrowserDPadNavigationEnabled = YES;
+// Navigation mode draws an outline around the selected item. Set to NO to show the cursor on it instead.
+static const BOOL kBrowserNavHighlightEnabled = YES;
 static const CFTimeInterval kDPadNavRepeatInterval = 0.18;   // seconds between jumps while an arrow is held
 // Cursor mode: how often to check whether the panel under the cursor should scroll instead of the cursor moving.
 static const CFTimeInterval kDPadPushProbeInterval = 0.05;
@@ -89,6 +91,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 @property (nonatomic, weak) id<BrowserRemoteInputControllerHost> host;
 @property (nonatomic, weak) UIView *rootView;
 @property (nonatomic, readwrite) UIImageView *cursorView;
+@property (nonatomic, readwrite) UIView *highlightView;
 @property (nonatomic, readwrite) UIPanGestureRecognizer *manualScrollPanRecognizer;
 @property (nonatomic, readwrite) UITapGestureRecognizer *playPauseDoubleTapRecognizer;
 @property (nonatomic, readwrite, getter=isCursorModeEnabled) BOOL cursorModeEnabled;
@@ -129,6 +132,18 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
         _cursorView.center = CGPointMake(CGRectGetMidX([UIScreen mainScreen].bounds), CGRectGetMidY([UIScreen mainScreen].bounds));
         _cursorView.image = BrowserDefaultCursor();
 
+        _highlightView = [[UIView alloc] initWithFrame:CGRectZero];
+        _highlightView.userInteractionEnabled = NO;
+        _highlightView.hidden = YES;
+        _highlightView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+        _highlightView.layer.cornerRadius = 12.0;
+        _highlightView.layer.borderWidth = 5.0;
+        _highlightView.layer.borderColor = [UIColor whiteColor].CGColor;
+        _highlightView.layer.shadowColor = [UIColor blackColor].CGColor;
+        _highlightView.layer.shadowOpacity = 0.6;
+        _highlightView.layer.shadowRadius = 10.0;
+        _highlightView.layer.shadowOffset = CGSizeZero;
+
         _playPauseDoubleTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handlePlayPauseDoubleTap:)];
         _playPauseDoubleTapRecognizer.numberOfTapsRequired = 2;
         _playPauseDoubleTapRecognizer.allowedPressTypes = @[@(UIPressTypePlayPause)];
@@ -149,6 +164,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
     self.lastTouchLocation = CGPointMake(-1, -1);
     [self stopManualScrollInertia];
     [self stopDPadMovement];
+    [self hideNavigationHighlight];
     [self refreshInteractionState];
     if (!wasCursorModeEnabled && cursorModeEnabled) {
         [self.host browserRemoteInputControllerPersistSession];
@@ -164,9 +180,15 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
     scrollView.scrollEnabled = shouldAllowWebInteraction;
     self.manualScrollPanRecognizer.enabled = shouldAllowWebInteraction;
     [self.host browserRemoteInputControllerSetWebInteractionEnabled:shouldAllowWebInteraction];
-    self.cursorView.hidden = (!self.cursorModeEnabled && !kBrowserDPadNavigationEnabled) ||
+    BOOL showCursorInNavMode = kBrowserDPadNavigationEnabled && !kBrowserNavHighlightEnabled;
+    self.cursorView.hidden = (!self.cursorModeEnabled && !showCursorInNavMode) ||
         [self.host browserRemoteInputControllerTabOverviewVisible] ||
         topBarFocusActive;
+    if (self.cursorModeEnabled ||
+        [self.host browserRemoteInputControllerTabOverviewVisible] ||
+        topBarFocusActive) {
+        self.highlightView.hidden = YES;
+    }
 }
 
 - (BOOL)applyManualScrollDelta:(CGPoint)delta {
@@ -319,6 +341,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 
     if (gestureRecognizer.state == UIGestureRecognizerStateBegan) {
         [self stopManualScrollInertia];
+        [self hideNavigationHighlight];
     }
 
     CGPoint translation = [gestureRecognizer translationInView:self.rootView];
@@ -532,11 +555,16 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 - (BOOL)performNavigationStepForType:(UIPressType)type {
     CGPoint direction = BrowserDPadDirection(type);
     CGPoint target = CGPointZero;
-    NSInteger result = [self.host browserRemoteInputControllerNavigateInDirection:direction targetViewPoint:&target];
+    CGRect targetRect = CGRectZero;
+    NSInteger result = [self.host browserRemoteInputControllerNavigateInDirection:direction
+                                                                  targetViewPoint:&target
+                                                                   targetViewRect:&targetRect];
     if (result == 1) {
         [self setCursorOriginClamped:target];
+        [self showNavigationHighlightForRect:targetRect];
     } else if (result == 2) {
         self.dpadDidScroll = YES;
+        [self hideNavigationHighlight];
     } else if (type == UIPressTypeUpArrow && [self.host browserRemoteInputControllerCanActivateTopBarFocus]) {
         [self stopDPadMovement];
         [self.host browserRemoteInputControllerActivateTopBarFocus];
@@ -615,6 +643,28 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
         return;
     }
     [self moveCursorByDelta:CGPointMake(direction.x * speed * deltaTime, direction.y * speed * deltaTime)];
+}
+
+- (void)showNavigationHighlightForRect:(CGRect)rect {
+    if (!kBrowserNavHighlightEnabled || CGRectIsNull(rect) || CGRectIsEmpty(rect)) {
+        self.highlightView.hidden = YES;
+        return;
+    }
+    CGRect target = CGRectInset(rect, -6.0, -6.0);
+    if (self.highlightView.hidden) {
+        self.highlightView.frame = target;
+        self.highlightView.hidden = NO;
+    } else {
+        [UIView animateWithDuration:0.12
+                              delay:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+                         animations:^{ self.highlightView.frame = target; }
+                         completion:nil];
+    }
+}
+
+- (void)hideNavigationHighlight {
+    self.highlightView.hidden = YES;
 }
 
 - (BOOL)endDPadPress:(UIPress *)press {
