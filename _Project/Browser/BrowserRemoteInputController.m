@@ -58,6 +58,8 @@ static const CGFloat kDPadScrollSpeed = 900.0;       // page scroll speed when p
 // Single clicks are delayed by this long, so lower it if clicking feels sluggish.
 static const CFTimeInterval kSelectDoublePressWindow = 0.5;
 // Scroll mode: arrows scroll the page (tap = one step, hold = continuous with ramp-up).
+// Set to NO to leave scroll mode exactly as the original app handled it.
+static const BOOL kBrowserDPadScrollModeEnabled = NO;
 static const CGFloat kDPadScrollTapStep = 240.0;
 static const CGFloat kDPadScrollMinSpeed = 600.0;
 static const CGFloat kDPadScrollMaxSpeed = 2400.0;
@@ -444,7 +446,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 }
 
 - (BOOL)dpadScrollControlActive {
-    if (!kBrowserDPadCursorEnabled || self.cursorModeEnabled) {
+    if (!kBrowserDPadCursorEnabled || !kBrowserDPadScrollModeEnabled || self.cursorModeEnabled) {
         return NO;
     }
     if ([self.host browserRemoteInputControllerPresentedViewController] != nil ||
