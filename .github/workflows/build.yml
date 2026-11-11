@@ -1,0 +1,26 @@
+name: Build unsigned IPA
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: _Project
+    steps:
+      - uses: actions/checkout@v4
+      - name: List schemes
+        run: xcodebuild -list
+      - name: Build
+        run: |
+          xcodebuild -scheme "YOUR_SCHEME" -sdk appletvos -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R "$(find build -type d -name '*.app' -path '*Release-appletvos*' | head -n 1)" Payload/
+          zip -r tvOSBrowser.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tvOSBrowser-ipa
+          path: _Project/tvOSBrowser.ipa
