@@ -64,6 +64,10 @@ static const CFTimeInterval kPlayPauseHoldDuration = 0.6;
 static const BOOL kBrowserDPadNavigationEnabled = YES;
 // Navigation mode draws an outline around the selected item. Set to NO to show the cursor on it instead.
 static const BOOL kBrowserNavHighlightEnabled = YES;
+// Start in navigation mode when the app opens. Set to NO to start in cursor mode.
+static const BOOL kBrowserStartInNavigationMode = YES;
+// Max gap between two Play/Pause presses to count as a double press (opens the Advanced Menu).
+static const CFTimeInterval kPlayPauseDoublePressWindow = 0.6;
 static const CFTimeInterval kDPadNavRepeatInterval = 0.18;   // seconds between jumps while an arrow is held
 // Cursor mode: how often to check whether the panel under the cursor should scroll instead of the cursor moving.
 static const CFTimeInterval kDPadPushProbeInterval = 0.05;
@@ -110,6 +114,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 @property (nonatomic) BOOL dpadPressBeganAtTopEdge;
 @property (nonatomic) BOOL dpadDidScroll;
 @property (nonatomic) BOOL playPauseHoldFired;
+@property (nonatomic) CFTimeInterval lastPlayPauseTimestamp;
 @property (nonatomic) CFTimeInterval dpadLastPush;
 @property (nonatomic) CGFloat dpadPendingScroll;
 @property (nonatomic) BOOL dpadScrolling;
@@ -126,7 +131,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
         _host = host;
         _rootView = rootView;
         _lastTouchLocation = CGPointMake(-1, -1);
-        _cursorModeEnabled = YES;
+        _cursorModeEnabled = !(kBrowserDPadCursorEnabled && kBrowserDPadNavigationEnabled && kBrowserStartInNavigationMode);
 
         _cursorView = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 64, 64)];
         _cursorView.center = CGPointMake(CGRectGetMidX([UIScreen mainScreen].bounds), CGRectGetMidY([UIScreen mainScreen].bounds));
@@ -147,6 +152,9 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
         _playPauseDoubleTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handlePlayPauseDoubleTap:)];
         _playPauseDoubleTapRecognizer.numberOfTapsRequired = 2;
         _playPauseDoubleTapRecognizer.allowedPressTypes = @[@(UIPressTypePlayPause)];
+        // Double press is now detected in handlePressesEnded; this recognizer delayed and swallowed the
+        // Play/Pause presses, so it stays disabled.
+        _playPauseDoubleTapRecognizer.enabled = NO;
         [rootView addGestureRecognizer:_playPauseDoubleTapRecognizer];
 
         _manualScrollPanRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleManualScrollPan:)];
@@ -451,6 +459,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 
     if (press.type == UIPressTypeSelect) {
         self.lastDirectSelectPressTimestamp = CACurrentMediaTime();
+        [self hideNavigationHighlight];
         [self handleSelectPressEnded];
         return YES;
     }
@@ -477,7 +486,20 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
         return YES;
     }
     if (press.type == UIPressTypePlayPause) {
-        [self.host browserRemoteInputControllerHandlePlayPausePress];
+        if ([self.host browserRemoteInputControllerPresentedViewController] != nil) {
+            // An alert is showing: Play/Pause dismisses it, as before.
+            [self.host browserRemoteInputControllerHandlePlayPausePress];
+            return YES;
+        }
+        // Double press opens the Advanced Menu (where the top bar can be shown again).
+        // A single press no longer opens the Quick Menu.
+        CFTimeInterval playPauseNow = CACurrentMediaTime();
+        if (self.lastPlayPauseTimestamp > 0 && (playPauseNow - self.lastPlayPauseTimestamp) < kPlayPauseDoublePressWindow) {
+            self.lastPlayPauseTimestamp = 0;
+            [self.host browserRemoteInputControllerHandleAdvancedMenuPress];
+        } else {
+            self.lastPlayPauseTimestamp = playPauseNow;
+        }
         return YES;
     }
     return NO;

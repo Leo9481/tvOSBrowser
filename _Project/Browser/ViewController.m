@@ -135,6 +135,8 @@ static UIColor *kTextColor(void) {
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [UIApplication sharedApplication].idleTimerDisabled = YES;
+    // Apply the starting mode (navigation mode by default) to the web view and cursor.
+    [self.remoteInputController refreshInteractionState];
     [self.tabCoordinator webViewDidAppear];
     if (!self.preferencesStore.dontShowHintsOnLaunch && !self.displayedHintsOnLaunch) {
         [self showHintsAlert];
