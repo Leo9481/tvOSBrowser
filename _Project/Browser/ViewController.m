@@ -736,9 +736,11 @@ static UIColor *kTextColor(void) {
     webPoint.y = MAX(webPoint.y, 0.0);
     CGFloat scale = [self browserWebScale];
     CGPoint domPoint = CGPointMake(webPoint.x / scale, webPoint.y / scale);
+    // Pressing Up with nothing above should open the top bar rather than scroll the page.
+    BOOL allowScroll = !(direction.y < 0.0 && [self canActivateTopBarFocusMode]);
     NSDictionary *result = [self.domInteractionService navigationTargetFromDOMPoint:domPoint
                                                                           direction:direction
-                                                                        allowScroll:YES
+                                                                        allowScroll:allowScroll
                                                                             webView:self.webview];
     if (result == nil) {
         return 0;

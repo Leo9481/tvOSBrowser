@@ -53,7 +53,12 @@ static const CGFloat kDPadMaxSpeed = 1800.0;         // points/second after the 
 static const CFTimeInterval kDPadHoldDelay = 0.25;   // seconds before continuous movement starts
 static const CFTimeInterval kDPadRampDuration = 1.2; // seconds to reach max speed
 static const CGFloat kDPadEdgeMargin = 4.0;          // "at the screen edge" tolerance
+// Double-pressing Select to switch modes made every click wait for a possible second press.
+// Leave this NO to click immediately; the mode is switched by holding Play/Pause instead.
+static const BOOL kSelectDoublePressTogglesMode = NO;
 static const CFTimeInterval kSelectDoublePressWindow = 0.5;
+// Hold Play/Pause this long to switch between cursor and navigation mode.
+static const CFTimeInterval kPlayPauseHoldDuration = 0.6;
 // Navigation mode (replaces scroll mode): arrows jump to the nearest clickable item.
 // Set to NO to leave scroll mode exactly as the original app handled it.
 static const BOOL kBrowserDPadNavigationEnabled = YES;
@@ -101,6 +106,7 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 @property (nonatomic) CFTimeInterval dpadLastTimestamp;
 @property (nonatomic) BOOL dpadPressBeganAtTopEdge;
 @property (nonatomic) BOOL dpadDidScroll;
+@property (nonatomic) BOOL playPauseHoldFired;
 @property (nonatomic) CFTimeInterval dpadLastPush;
 @property (nonatomic) CGFloat dpadPendingScroll;
 @property (nonatomic) BOOL dpadScrolling;
@@ -266,6 +272,14 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 
 - (void)handleSelectPressEnded {
     CFTimeInterval now = CACurrentMediaTime();
+    if (!kSelectDoublePressTogglesMode) {
+        // Click right away, with no wait for a second press.
+        self.awaitingSecondSelectPress = YES;
+        self.lastSelectPressTimestamp = now;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleDeferredSelectPressAction) object:nil];
+        [self handleDeferredSelectPressAction];
+        return;
+    }
     if (self.awaitingSecondSelectPress && (now - self.lastSelectPressTimestamp) < kSelectDoublePressWindow) {
         self.awaitingSecondSelectPress = NO;
         self.lastSelectPressTimestamp = now;
@@ -341,6 +355,11 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
     if (press != nil && BrowserIsArrowPress(press.type) && [self dpadControlActive]) {
         [self beginDPadPress:press];
     }
+    if (press != nil && press.type == UIPressTypePlayPause && [self playPauseHoldAllowed]) {
+        self.playPauseHoldFired = NO;
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handlePlayPauseHold) object:nil];
+        [self performSelector:@selector(handlePlayPauseHold) withObject:nil afterDelay:kPlayPauseHoldDuration];
+    }
     (void)event;
 }
 
@@ -357,6 +376,14 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
               BrowserPressPhaseString(press.phase),
               [self.host browserRemoteInputControllerPresentedViewController] == nil ? @"(nil)" : NSStringFromClass([[self.host browserRemoteInputControllerPresentedViewController] class]),
               [self.host browserRemoteInputControllerTabOverviewVisible] ? @"YES" : @"NO");
+    }
+
+    if (press.type == UIPressTypePlayPause) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handlePlayPauseHold) object:nil];
+        if (self.playPauseHoldFired) {
+            self.playPauseHoldFired = NO;
+            return YES;
+        }
     }
 
     if ([self.host browserRemoteInputControllerTopBarFocusActive]) {
@@ -615,6 +642,23 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
     (void)presses;
     (void)event;
     [self stopDPadMovement];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handlePlayPauseHold) object:nil];
+    self.playPauseHoldFired = NO;
+}
+
+- (BOOL)playPauseHoldAllowed {
+    return [self.host browserRemoteInputControllerPresentedViewController] == nil &&
+           ![self.host browserRemoteInputControllerTopBarFocusActive] &&
+           ![self.host browserRemoteInputControllerTabOverviewVisible];
+}
+
+// Holding Play/Pause switches between cursor mode and navigation mode.
+- (void)handlePlayPauseHold {
+    if (![self playPauseHoldAllowed]) {
+        return;
+    }
+    self.playPauseHoldFired = YES;
+    [self setCursorModeEnabled:!self.cursorModeEnabled];
 }
 
 - (BOOL)handleTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
