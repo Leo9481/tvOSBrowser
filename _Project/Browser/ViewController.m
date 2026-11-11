@@ -412,7 +412,7 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)browserHandlePrimaryAction {
-    if (!self.remoteInputController.cursorModeEnabled || self.webview == nil) {
+    if (self.webview == nil) {
         return;
     }
 
@@ -701,6 +701,58 @@ static UIColor *kTextColor(void) {
     return [self.pageActionCoordinator hoverStateAtDOMPoint:domPoint webView:self.webview];
 }
 
+- (CGFloat)browserWebScale {
+    NSInteger innerWidth = [[self.webview stringByEvaluatingJavaScriptFromString:@"window.innerWidth"] integerValue];
+    CGFloat width = CGRectGetWidth(self.webview.frame);
+    if (innerWidth <= 0 || width <= 0.0) {
+        return 1.0;
+    }
+    return width / (CGFloat)innerWidth;
+}
+
+- (BOOL)browserRemoteInputControllerPushScrollInDirection:(CGPoint)direction amount:(CGFloat)amount {
+    if (self.webview == nil || self.webview.request == nil) {
+        return NO;
+    }
+    CGPoint webPoint = [self.view convertPoint:self.remoteInputController.cursorView.frame.origin toView:self.webview];
+    if (webPoint.y < 0.0) {
+        return NO;
+    }
+    CGFloat scale = [self browserWebScale];
+    CGPoint domPoint = CGPointMake(webPoint.x / scale, webPoint.y / scale);
+    return [self.domInteractionService pushScrollAtDOMPoint:domPoint
+                                                  direction:direction
+                                                     amount:amount / scale
+                                                       zone:120.0 / scale
+                                                    webView:self.webview];
+}
+
+- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction targetViewPoint:(CGPoint *)targetViewPoint {
+    if (self.webview == nil || self.webview.request == nil) {
+        return 0;
+    }
+    CGPoint webPoint = [self.view convertPoint:self.remoteInputController.cursorView.frame.origin toView:self.webview];
+    webPoint.x = MAX(webPoint.x, 0.0);
+    webPoint.y = MAX(webPoint.y, 0.0);
+    CGFloat scale = [self browserWebScale];
+    CGPoint domPoint = CGPointMake(webPoint.x / scale, webPoint.y / scale);
+    NSDictionary *result = [self.domInteractionService navigationTargetFromDOMPoint:domPoint
+                                                                          direction:direction
+                                                                        allowScroll:YES
+                                                                            webView:self.webview];
+    if (result == nil) {
+        return 0;
+    }
+    if ([result[@"found"] boolValue]) {
+        CGPoint targetWebPoint = CGPointMake([result[@"x"] doubleValue] * scale, [result[@"y"] doubleValue] * scale);
+        if (targetViewPoint != NULL) {
+            *targetViewPoint = [self.view convertPoint:targetWebPoint fromView:self.webview];
+        }
+        return 1;
+    }
+    return [result[@"scrolled"] boolValue] ? 2 : 0;
+}
+
 - (void)browserRemoteInputControllerSetWebInteractionEnabled:(BOOL)enabled {
     self.webview.userInteractionEnabled = enabled;
 }
@@ -814,6 +866,11 @@ static UIColor *kTextColor(void) {
         return;
     }
     [super pressesEnded:presses withEvent:event];
+}
+
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    [self.remoteInputController handlePressesCancelled:presses withEvent:event];
+    [super pressesCancelled:presses withEvent:event];
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {

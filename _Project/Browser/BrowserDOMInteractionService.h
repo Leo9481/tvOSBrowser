@@ -19,6 +19,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)evaluateHoverStateJavaScriptAtPoint:(CGPoint)point
                                            webView:(BrowserWebView *)webView;
 - (NSString *)javaScriptEscapedString:(NSString *)string;
+- (BOOL)pushScrollAtDOMPoint:(CGPoint)point
+                   direction:(CGPoint)direction
+                      amount:(CGFloat)amount
+                        zone:(CGFloat)zone
+                     webView:(BrowserWebView *)webView;
+- (nullable NSDictionary *)navigationTargetFromDOMPoint:(CGPoint)point
+                                              direction:(CGPoint)direction
+                                            allowScroll:(BOOL)allowScroll
+                                                webView:(BrowserWebView *)webView;
 - (NSDictionary *)videoInfoAtDOMPoint:(CGPoint)point
                                webView:(BrowserWebView *)webView;
 - (NSDictionary *)linkInfoAtDOMPoint:(CGPoint)point

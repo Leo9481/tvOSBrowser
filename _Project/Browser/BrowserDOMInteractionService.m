@@ -131,6 +131,147 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return [self evaluateResolvedElementJavaScriptAtPoint:point webView:webView body:wrappedBody];
 }
 
+- (BOOL)pushScrollAtDOMPoint:(CGPoint)point
+                   direction:(CGPoint)direction
+                      amount:(CGFloat)amount
+                        zone:(CGFloat)zone
+                     webView:(BrowserWebView *)webView {
+    if (webView == nil) {
+        return NO;
+    }
+    NSString *script = [NSString stringWithFormat:
+                        @"(function(){"
+                        @"var x=%ld,y=%ld,dx=%ld,dy=%ld,zone=%.2f,amount=%.2f;"
+                        @"function ok(v){return v===\"auto\"||v===\"scroll\"||v===\"overlay\";}"
+                        @"function can(el){"
+                        @"var cs=getComputedStyle(el);"
+                        @"if(dy!==0&&ok(cs.overflowY)&&el.scrollHeight>el.clientHeight+1){"
+                        @"if(dy>0&&el.scrollTop+el.clientHeight<el.scrollHeight-1){return true;}"
+                        @"if(dy<0&&el.scrollTop>0){return true;}"
+                        @"}"
+                        @"if(dx!==0&&ok(cs.overflowX)&&el.scrollWidth>el.clientWidth+1){"
+                        @"if(dx>0&&el.scrollLeft+el.clientWidth<el.scrollWidth-1){return true;}"
+                        @"if(dx<0&&el.scrollLeft>0){return true;}"
+                        @"}"
+                        @"return false;"
+                        @"}"
+                        @"function findPanel(){"
+                        @"var el=document.elementFromPoint(x,y);"
+                        @"while(el&&el!==document.body&&el!==document.documentElement){"
+                        @"if(can(el)){return el;}"
+                        @"el=el.parentElement;"
+                        @"}"
+                        @"return null;"
+                        @"}"
+                        @"var panel=findPanel();"
+                        @"var l=0,t=0,r=window.innerWidth,b=window.innerHeight;"
+                        @"if(panel){var rc=panel.getBoundingClientRect();l=rc.left;t=rc.top;r=rc.right;b=rc.bottom;}"
+                        @"var dist=dy>0?b-y:(dy<0?y-t:(dx>0?r-x:x-l));"
+                        @"if(dist>zone){return \"move\";}"
+                        @"if(panel){panel.scrollTop+=dy*amount;panel.scrollLeft+=dx*amount;return \"scrolled\";}"
+                        @"var se=document.scrollingElement||document.documentElement;"
+                        @"var bt=se.scrollTop,bl=se.scrollLeft;"
+                        @"window.scrollBy(dx*amount,dy*amount);"
+                        @"return (se.scrollTop!==bt||se.scrollLeft!==bl)?\"scrolled\":\"move\";"
+                        @"})()",
+                        (long)llround(point.x),
+                        (long)llround(point.y),
+                        (long)llround(direction.x),
+                        (long)llround(direction.y),
+                        (double)zone,
+                        (double)amount];
+    NSString *result = [webView stringByEvaluatingJavaScriptFromString:script];
+    return [result isEqualToString:@"scrolled"];
+}
+
+- (NSDictionary *)navigationTargetFromDOMPoint:(CGPoint)point
+                                     direction:(CGPoint)direction
+                                   allowScroll:(BOOL)allowScroll
+                                       webView:(BrowserWebView *)webView {
+    if (webView == nil) {
+        return nil;
+    }
+    NSString *script = [NSString stringWithFormat:
+                        @"(function(){"
+                        @"var x=%ld,y=%ld,dx=%ld,dy=%ld,allow=%ld;"
+                        @"var sel=\"a[href],button,input:not([type='hidden']),textarea,select,summary,[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='option'],[onclick],[tabindex]:not([tabindex='-1'])\";"
+                        @"var vw=window.innerWidth,vh=window.innerHeight;"
+                        @"function ok(v){return v===\"auto\"||v===\"scroll\"||v===\"overlay\";}"
+                        @"function can(el){"
+                        @"var cs=getComputedStyle(el);"
+                        @"if(dy!==0&&ok(cs.overflowY)&&el.scrollHeight>el.clientHeight+1){"
+                        @"if(dy>0&&el.scrollTop+el.clientHeight<el.scrollHeight-1){return true;}"
+                        @"if(dy<0&&el.scrollTop>0){return true;}"
+                        @"}"
+                        @"if(dx!==0&&ok(cs.overflowX)&&el.scrollWidth>el.clientWidth+1){"
+                        @"if(dx>0&&el.scrollLeft+el.clientWidth<el.scrollWidth-1){return true;}"
+                        @"if(dx<0&&el.scrollLeft>0){return true;}"
+                        @"}"
+                        @"return false;"
+                        @"}"
+                        @"function findPanel(){"
+                        @"var el=document.elementFromPoint(x,y);"
+                        @"while(el&&el!==document.body&&el!==document.documentElement){"
+                        @"if(can(el)){return el;}"
+                        @"el=el.parentElement;"
+                        @"}"
+                        @"return null;"
+                        @"}"
+                        @"function pick(){"
+                        @"var nodes=document.querySelectorAll(sel),best=null,bestScore=1e12;"
+                        @"for(var i=0;i<nodes.length;i++){"
+                        @"var el=nodes[i];"
+                        @"if(el.disabled){continue;}"
+                        @"var rc=el.getBoundingClientRect();"
+                        @"if(rc.width<4||rc.height<4){continue;}"
+                        @"if(rc.width*rc.height>0.6*vw*vh){continue;}"
+                        @"if(x>=rc.left&&x<=rc.right&&y>=rc.top&&y<=rc.bottom){continue;}"
+                        @"var l=Math.max(rc.left,0),t=Math.max(rc.top,0),r=Math.min(rc.right,vw),b=Math.min(rc.bottom,vh);"
+                        @"if(r-l<4||b-t<4){continue;}"
+                        @"var cx=(l+r)/2,cy=(t+b)/2;"
+                        @"var hit=document.elementFromPoint(cx,cy);"
+                        @"if(!hit||!(el===hit||el.contains(hit)||hit.contains(el))){continue;}"
+                        @"var ex=cx-x,ey=cy-y;"
+                        @"var along=dx*ex+dy*ey;"
+                        @"if(along<=4){continue;}"
+                        @"var perp=Math.abs(dy*ex)+Math.abs(dx*ey);"
+                        @"var score=along+2*perp;"
+                        @"if(score<bestScore){bestScore=score;best={x:cx,y:cy};}"
+                        @"}"
+                        @"return best;"
+                        @"}"
+                        @"function scrollStep(){"
+                        @"var panel=findPanel();"
+                        @"if(panel){"
+                        @"var amt=(dy!==0?panel.clientHeight:panel.clientWidth)*0.6;"
+                        @"var p1=panel.scrollTop,p2=panel.scrollLeft;"
+                        @"panel.scrollTop+=dy*amt;panel.scrollLeft+=dx*amt;"
+                        @"return panel.scrollTop!==p1||panel.scrollLeft!==p2;"
+                        @"}"
+                        @"var se=document.scrollingElement||document.documentElement;"
+                        @"var b1=se.scrollTop,b2=se.scrollLeft;"
+                        @"var amt2=(dy!==0?vh:vw)*0.6;"
+                        @"window.scrollBy(dx*amt2,dy*amt2);"
+                        @"return se.scrollTop!==b1||se.scrollLeft!==b2;"
+                        @"}"
+                        @"var best=pick(),scrolled=false;"
+                        @"if(!best&&allow){scrolled=scrollStep();if(scrolled){best=pick();}}"
+                        @"return JSON.stringify({found:best!==null,x:best?best.x:0,y:best?best.y:0,scrolled:scrolled});"
+                        @"})()",
+                        (long)llround(point.x),
+                        (long)llround(point.y),
+                        (long)llround(direction.x),
+                        (long)llround(direction.y),
+                        (long)(allowScroll ? 1 : 0)];
+    NSString *json = [webView stringByEvaluatingJavaScriptFromString:script];
+    if (json.length == 0) {
+        return nil;
+    }
+    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+    id object = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+    return [object isKindOfClass:[NSDictionary class]] ? object : nil;
+}
+
 - (NSString *)evaluateHoverStateJavaScriptAtPoint:(CGPoint)point
                                            webView:(BrowserWebView *)webView {
     if (webView == nil) {

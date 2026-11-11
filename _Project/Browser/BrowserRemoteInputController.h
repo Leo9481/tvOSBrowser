@@ -23,6 +23,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point;
 - (void)browserRemoteInputControllerSetWebInteractionEnabled:(BOOL)enabled;
 - (void)browserRemoteInputControllerPersistSession;
+// Cursor mode: if the panel (or page) under the cursor can scroll in `direction` and the cursor is near
+// that panel's edge, scrolls it by `amount` view points and returns YES.
+- (BOOL)browserRemoteInputControllerPushScrollInDirection:(CGPoint)direction amount:(CGFloat)amount;
+// Navigation mode: finds the nearest clickable item in `direction`. Returns 1 and sets *targetViewPoint
+// if found, 2 if it only scrolled, 0 if nothing happened.
+- (NSInteger)browserRemoteInputControllerNavigateInDirection:(CGPoint)direction targetViewPoint:(CGPoint *)targetViewPoint;
 
 @end
 
@@ -41,6 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)handleGlobalSelectPressEndedNotification;
 - (void)handlePressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event;
 - (BOOL)handlePressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event;
+- (void)handlePressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event;
 - (BOOL)handleTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
 - (BOOL)handleTouchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
 - (void)handleTouchesEnded;
