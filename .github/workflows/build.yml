@@ -12,7 +12,7 @@ jobs:
         run: xcodebuild -list
       - name: Build
         run: |
-          xcodebuild -scheme "YOUR_SCHEME" -sdk appletvos -configuration Release \
+          xcodebuild -scheme "Browser" -sdk appletvos -configuration Release \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
       - name: Package IPA
