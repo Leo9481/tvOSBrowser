@@ -403,7 +403,7 @@ static UIColor *kTextColor(void) {
 
 - (void)showHintsAlert {
     UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Usage Guide"
-                                                                             message:@"Double press the touch area to switch between cursor & scroll mode.\nPress the touch area while in cursor mode to click.\nSingle tap to Menu button to Go Back, or Exit on root page.\nSingle tap the Play/Pause button to: Go Forward, Enter URL or Reload Page.\nDouble tap the Play/Pause to show the Advanced Menu with more options.\nUse the tabs icon in the top bar to open the tab overview."
+                                                                             message:@"Navigation mode: use the arrows to jump between links and buttons, and press Select to click the outlined item. Press Up at the top of a page to open the top bar.\nHold Play/Pause to switch between navigation mode and cursor mode.\nCursor mode: the arrows move the cursor (hold to speed up, or to scroll at the edge of a panel), and Select clicks.\nPress Menu to Go Back, or Exit on the root page.\nDouble press Play/Pause to show the Advanced Menu with more options.\nUse the tabs icon in the top bar to open the tab overview."
                                                                       preferredStyle:UIAlertControllerStyleAlert];
 
     __weak typeof(self) weakSelf = self;
