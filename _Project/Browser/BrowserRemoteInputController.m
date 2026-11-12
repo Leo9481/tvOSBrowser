@@ -301,6 +301,9 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
 }
 
 - (void)handleSelectPressEnded {
+    // Every Select path (direct press or the global notification) ends up here, so hide the
+    // navigation outline here rather than only in handlePressesEnded.
+    [self hideNavigationHighlight];
     CFTimeInterval now = CACurrentMediaTime();
     if (!kSelectDoublePressTogglesMode) {
         // Click right away, with no wait for a second press.
@@ -415,6 +418,16 @@ static CGPoint BrowserDPadDirection(UIPressType type) {
             self.playPauseHoldFired = NO;
             return YES;
         }
+    }
+
+    // A text-entry alert (URL box or a page text field) is showing. Its on-screen keyboard needs Select
+    // and the arrows for itself, so don't act on them or swallow them here (that also stops Up from
+    // opening the top bar behind the keyboard). Menu and Play/Pause are still handled below.
+    UIViewController *keyboardPresented = [self.host browserRemoteInputControllerPresentedViewController];
+    if (keyboardPresented != nil &&
+        [keyboardPresented isKindOfClass:[UIAlertController class]] &&
+        (press.type == UIPressTypeSelect || BrowserIsArrowPress(press.type))) {
+        return NO;
     }
 
     if ([self.host browserRemoteInputControllerTopBarFocusActive]) {
