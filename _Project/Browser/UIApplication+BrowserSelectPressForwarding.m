@@ -36,6 +36,83 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
     }
 }
 
+// Temporary on-screen readout of remote presses, to debug the keyboard's space/delete/clear keys.
+// Set to NO (or remove) once that is fixed.
+static BOOL const kBrowserPressDebugOverlayEnabled = YES;
+static UIWindow *sBrowserPressDebugWindow = nil;
+static UILabel *sBrowserPressDebugLabel = nil;
+static NSMutableArray<NSString *> *sBrowserPressDebugLines = nil;
+static NSInteger sBrowserPressDebugStamp = 0;
+
+static void BrowserPressDebugRecord(UIPress *press) {
+    if (!kBrowserPressDebugOverlayEnabled || press == nil) {
+        return;
+    }
+    if (press.phase != UIPressPhaseBegan && press.phase != UIPressPhaseEnded && press.phase != UIPressPhaseCancelled) {
+        return;
+    }
+
+    if (sBrowserPressDebugWindow == nil) {
+        UIWindow *window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        window.windowLevel = UIWindowLevelAlert + 1000;
+        window.userInteractionEnabled = NO;
+        window.backgroundColor = [UIColor clearColor];
+        UIViewController *rootViewController = [[UIViewController alloc] init];
+        rootViewController.view.backgroundColor = [UIColor clearColor];
+        rootViewController.view.userInteractionEnabled = NO;
+        window.rootViewController = rootViewController;
+
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(40.0, 40.0, 1200.0, 330.0)];
+        label.numberOfLines = 0;
+        label.font = [UIFont monospacedSystemFontOfSize:22.0 weight:UIFontWeightRegular];
+        label.textColor = [UIColor yellowColor];
+        label.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.8];
+        [rootViewController.view addSubview:label];
+
+        window.hidden = NO;
+        sBrowserPressDebugWindow = window;
+        sBrowserPressDebugLabel = label;
+        sBrowserPressDebugLines = [NSMutableArray array];
+    }
+
+    NSString *focusDescription = @"(none)";
+    NSObject *focusedItem = (NSObject *)[UIScreen mainScreen].focusedItem;
+    if (focusedItem != nil) {
+        NSString *accessibilityLabel = nil;
+        if ([focusedItem respondsToSelector:@selector(accessibilityLabel)]) {
+            accessibilityLabel = [focusedItem accessibilityLabel];
+        }
+        focusDescription = NSStringFromClass([focusedItem class]);
+        if (accessibilityLabel.length > 0) {
+            focusDescription = [NSString stringWithFormat:@"%@ \"%@\"", focusDescription, accessibilityLabel];
+        }
+    }
+
+    UIViewController *rootPresented = [UIApplication sharedApplication].keyWindow.rootViewController;
+    while (rootPresented.presentedViewController != nil) {
+        rootPresented = rootPresented.presentedViewController;
+    }
+
+    [sBrowserPressDebugLines addObject:[NSString stringWithFormat:@"%@ %@ | focus=%@ | top=%@",
+                                        BrowserPressTypeString(press.type),
+                                        BrowserPressPhaseString(press.phase),
+                                        focusDescription,
+                                        rootPresented == nil ? @"(nil)" : NSStringFromClass([rootPresented class])]];
+    while (sBrowserPressDebugLines.count > 9) {
+        [sBrowserPressDebugLines removeObjectAtIndex:0];
+    }
+    sBrowserPressDebugLabel.text = [sBrowserPressDebugLines componentsJoinedByString:@"\n"];
+    sBrowserPressDebugWindow.hidden = NO;
+
+    NSInteger stamp = ++sBrowserPressDebugStamp;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (stamp == sBrowserPressDebugStamp) {
+            sBrowserPressDebugWindow.hidden = YES;
+            [sBrowserPressDebugLines removeAllObjects];
+        }
+    });
+}
+
 static UIViewController *BrowserFindViewControllerOfClass(UIViewController *viewController, Class targetClass) {
     if (viewController == nil || targetClass == Nil) {
         return nil;
@@ -177,6 +254,7 @@ static UIViewController *BrowserFindPresentedNativeVideoPlayerViewController(UIA
     NSSet<UIPress *> *presses = ((id (*)(id, SEL))objc_msgSend)(event, allPressesSelector);
     for (UIPress *press in presses) {
         nativeVideoPlayerViewController = BrowserFindPresentedNativeVideoPlayerViewController(self, nativeVideoPlayerClass);
+        BrowserPressDebugRecord(press);
         if (press.type == UIPressTypeMenu || press.type == UIPressTypePlayPause || press.type == UIPressTypeSelect) {
             NSLog(@"[InputTrace][App] press=%@ phase=%@ top=%@",
                   BrowserPressTypeString(press.type),

@@ -237,7 +237,12 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserFeatureEntriesFor
                 ![lowercaseName containsString:@"webm"] &&
                 ![lowercaseName containsString:@"video"] &&
                 ![lowercaseName containsString:@"mse"] &&
-                ![lowercaseName containsString:@"managed"]) {
+                ![lowercaseName containsString:@"managed"] &&
+                ![lowercaseName containsString:@"mixed"] &&
+                ![lowercaseName containsString:@"insecure"] &&
+                ![lowercaseName containsString:@"upgrade"] &&
+                ![lowercaseName containsString:@"secure"] &&
+                ![lowercaseName containsString:@"https"]) {
                 continue;
             }
 
